@@ -1,0 +1,12 @@
+src/
+tests/
+*.test.ts
+tsconfig.json
+bunfig.toml
+DESIGN.md
+.git
+.gitignore
+docs/
+config/claude-proxy.config.json
+.prettierrc
+.eslintrc
