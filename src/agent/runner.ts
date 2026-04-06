@@ -3,12 +3,8 @@ import { AgentRunOptions, AgentEvent } from './types';
 
 export class AgentRunner {
   async *run(options: AgentRunOptions): AsyncGenerator<AgentEvent> {
-    const fullPrompt = options.system
-      ? `<system>\n${options.system}\n</system>\n\n${options.prompt}`
-      : options.prompt;
-
-    const abortController = new AbortController();
     let timeoutHandle: NodeJS.Timeout | undefined;
+    const abortController = new AbortController();
 
     if (options.timeout) {
       timeoutHandle = setTimeout(() => abortController.abort(), options.timeout);
@@ -16,11 +12,14 @@ export class AgentRunner {
 
     try {
       const q = query({
-        prompt: fullPrompt,
+        prompt: options.prompt,
         options: {
           model: options.model,
+          cwd: process.cwd(),
+          systemPrompt: options.system || undefined,
           permissionMode: 'bypassPermissions',
           allowDangerouslySkipPermissions: true,
+          abortController,
         },
       });
 
