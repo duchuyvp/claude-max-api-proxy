@@ -14,6 +14,10 @@ export function createAnthropicRoutes(): Hono {
     const subprocess = (ctx as any).subprocess;
     const config = (ctx as any).config;
 
+    if (!body || !body.messages) {
+      return ctx.json({ error: 'No messages provided' }, { status: 400 });
+    }
+
     const model = resolveModel(body.model, config);
     const isStreaming = body.stream ?? false;
 

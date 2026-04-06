@@ -11,6 +11,7 @@ export class AnthropicResponseAdapter {
   private currentContentBlock: any = null;
   private isStreaming: boolean;
   private encoder: TextEncoder;
+  private messageStartSent = false;
 
   constructor(model: string, writer?: WritableStreamDefaultWriter<Uint8Array>, isStreaming?: boolean) {
     this.model = model;
@@ -37,21 +38,25 @@ export class AnthropicResponseAdapter {
         return;
       }
 
-      // For streaming, emit as stream events
-      this.sendEvent('message_start', {
-        type: 'message_start',
-        message: {
-          id: this.messageId,
-          type: 'message',
-          role: 'assistant',
-          model: this.model,
-          content: [],
-          stop_reason: null,
-          stop_sequence: null,
-          usage: this.usage,
-        },
-      });
+      // Send message_start once if not already sent
+      if (!this.messageStartSent) {
+        this.sendEvent('message_start', {
+          type: 'message_start',
+          message: {
+            id: this.messageId,
+            type: 'message',
+            role: 'assistant',
+            model: this.model,
+            content: [],
+            stop_reason: null,
+            stop_sequence: null,
+            usage: this.usage,
+          },
+        });
+        this.messageStartSent = true;
+      }
 
+      // For streaming, emit as stream events
       message.content?.forEach((block: any, index: number) => {
         this.sendEvent('content_block_start', {
           type: 'content_block_start',
