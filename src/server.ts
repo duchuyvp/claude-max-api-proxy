@@ -2,16 +2,9 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import { Config } from './types';
-import { RequestQueue } from './queue';
-import { CLISubprocess } from './cli/subprocess';
-import { SessionManager } from './cli/session';
+import { AgentRunner } from './agent/runner';
 
-export function createServer(
-  config: Config,
-  queue: RequestQueue,
-  subprocess: CLISubprocess,
-  sessionManager: SessionManager
-): Hono {
+export function createServer(config: Config, agent: AgentRunner): Hono {
   const app = new Hono();
 
   // Middleware
@@ -25,10 +18,7 @@ export function createServer(
         const body = await ctx.req.json();
         (ctx as any).body = body;
       } catch {
-        return ctx.json(
-          { error: 'Invalid JSON' },
-          { status: 400 }
-        );
+        return ctx.json({ error: 'Invalid JSON' }, { status: 400 });
       }
     }
     await next();
@@ -38,17 +28,14 @@ export function createServer(
   app.get('/health', (ctx) => {
     return ctx.json({
       status: 'ok',
-      version: '2.0.0',
+      version: '3.0.0',
       uptime: process.uptime(),
-      queue_depth: queue.size(),
     });
   });
 
-  // Store queue, subprocess, sessionManager, config in context for routes
+  // Store agent and config in context for routes
   app.use(async (ctx, next) => {
-    (ctx as any).queue = queue;
-    (ctx as any).subprocess = subprocess;
-    (ctx as any).sessionManager = sessionManager;
+    (ctx as any).agent = agent;
     (ctx as any).config = config;
     await next();
   });

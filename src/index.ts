@@ -2,9 +2,7 @@
 
 import { createServer } from './server';
 import { loadConfig } from './config';
-import { RequestQueue } from './queue';
-import { CLISubprocess } from './cli/subprocess';
-import { SessionManager } from './cli/session';
+import { AgentRunner } from './agent/runner';
 import { createAnthropicRoutes } from './routes/anthropic';
 import { createOpenAIRoutes } from './routes/openai';
 import { createSharedRoutes } from './routes/shared';
@@ -43,7 +41,7 @@ async function main() {
   // Load config
   const config = loadConfig();
 
-  console.log('🚀 claude-max-api-proxy v2.0.0');
+  console.log('🚀 claude-max-api-proxy v3.0.0');
   console.log(`📦 Default model: ${config.defaultModel}`);
   console.log(`🔧 Available models: ${Object.keys(config.models).join(', ')}`);
 
@@ -59,12 +57,10 @@ async function main() {
   }
 
   // Initialize components
-  const queue = new RequestQueue();
-  const sessionManager = new SessionManager();
-  const subprocess = new CLISubprocess(config, sessionManager);
+  const agent = new AgentRunner();
 
   // Create server
-  const app = createServer(config, queue, subprocess, sessionManager);
+  const app = createServer(config, agent);
 
   // Register routes
   app.route('/', createAnthropicRoutes());
@@ -123,13 +119,11 @@ async function main() {
   // Graceful shutdown
   process.on('SIGINT', () => {
     console.log('\n🛑 Shutting down...');
-    queue.clear();
     process.exit(0);
   });
 
   process.on('SIGTERM', () => {
     console.log('\n🛑 Shutting down...');
-    queue.clear();
     process.exit(0);
   });
 }
