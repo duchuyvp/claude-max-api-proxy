@@ -101,12 +101,16 @@ export class CLISubprocess {
     }, timeout);
 
     // Write prompt to stdin
-    this.process.stdin?.write(fullPrompt);
-    this.process.stdin?.end();
+    const stdin = this.process.stdin;
+    if (stdin && typeof stdin !== 'number') {
+      stdin.write(fullPrompt);
+      stdin.end();
+    }
 
     // Process stdout
-    const reader = this.process.stdout?.getReader();
-    if (reader) {
+    const stdout = this.process.stdout;
+    if (stdout && typeof stdout !== 'number') {
+      const reader = stdout.getReader();
       try {
         while (true) {
           const { done, value } = await reader.read();
@@ -131,9 +135,10 @@ export class CLISubprocess {
     }
 
     if (exitCode !== 0) {
-      const stderrReader = this.process.stderr?.getReader();
+      const stderr_stream = this.process.stderr;
       let stderr = '';
-      if (stderrReader) {
+      if (stderr_stream && typeof stderr_stream !== 'number') {
+        const stderrReader = stderr_stream.getReader();
         try {
           while (true) {
             const { done, value } = await stderrReader.read();
