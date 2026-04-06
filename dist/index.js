@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// @bun
+import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
 var __defProp = Object.defineProperty;
@@ -31,7 +31,7 @@ var __toESM = (mod, isNodeMode, target) => {
   return to;
 };
 var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
-var __require = import.meta.require;
+var __require = /* @__PURE__ */ createRequire(import.meta.url);
 
 // node_modules/uuid/dist/rng.js
 var require_rng = __commonJS((exports) => {
@@ -2339,7 +2339,7 @@ class RequestQueue {
 }
 
 // src/cli/subprocess.ts
-var {spawn } = globalThis.Bun;
+import { spawn } from "child_process";
 
 // src/cli/stream-parser.ts
 class StreamParser {
@@ -2428,10 +2428,8 @@ ${options.system}
 
 ${fullPrompt}`;
     }
-    this.process = spawn(["claude", ...args], {
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe"
+    this.process = spawn("claude", args, {
+      stdio: ["pipe", "pipe", "pipe"]
     });
     const parser = new StreamParser(onEvent);
     let completed = false;
@@ -2445,60 +2443,43 @@ ${fullPrompt}`;
         completed = true;
       }
     }, timeout);
-    const stdin = this.process.stdin;
-    if (stdin && typeof stdin !== "number") {
-      stdin.write(fullPrompt);
-      stdin.end();
+    if (this.process.stdin) {
+      this.process.stdin.write(fullPrompt);
+      this.process.stdin.end();
     }
-    const stdout = this.process.stdout;
-    if (stdout && typeof stdout !== "number") {
-      const reader = stdout.getReader();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done)
-            break;
-          const chunk = new TextDecoder().decode(value);
-          parser.processChunk(chunk);
+    if (this.process.stdout) {
+      this.process.stdout.on("data", (chunk) => {
+        const str = chunk.toString("utf-8");
+        parser.processChunk(str);
+      });
+    }
+    let stderr = "";
+    if (this.process.stderr) {
+      this.process.stderr.on("data", (chunk) => {
+        stderr += chunk.toString("utf-8");
+      });
+    }
+    return new Promise((resolve) => {
+      this.process.on("exit", (exitCode) => {
+        parser.flush();
+        if (!completed) {
+          clearTimeout(this.timeoutHandle);
+          this.timeoutHandle = null;
+          completed = true;
         }
-      } finally {
-        reader.releaseLock();
-      }
-    }
-    parser.flush();
-    const exitCode = await this.process.exited;
-    if (!completed) {
-      clearTimeout(this.timeoutHandle);
-      this.timeoutHandle = null;
-      completed = true;
-    }
-    if (exitCode !== 0) {
-      const stderr_stream = this.process.stderr;
-      let stderr = "";
-      if (stderr_stream && typeof stderr_stream !== "number") {
-        const stderrReader = stderr_stream.getReader();
-        try {
-          while (true) {
-            const { done, value } = await stderrReader.read();
-            if (done)
-              break;
-            stderr += new TextDecoder().decode(value);
-          }
-        } finally {
-          stderrReader.releaseLock();
+        if (exitCode !== 0 && exitCode !== 143 && exitCode !== 15) {
+          onEvent({
+            type: "error",
+            error: {
+              message: `Claude CLI exited with code ${exitCode}`,
+              details: stderr.trim()
+            }
+          });
         }
-      }
-      if (exitCode !== 143 && exitCode !== 15) {
-        onEvent({
-          type: "error",
-          error: {
-            message: `Claude CLI exited with code ${exitCode}`,
-            details: stderr.trim()
-          }
-        });
-      }
-    }
-    this.process = null;
+        this.process = null;
+        resolve();
+      });
+    });
   }
   kill() {
     if (this.process) {
@@ -3024,6 +3005,7 @@ function createSharedRoutes() {
 
 // src/index.ts
 import { execSync } from "child_process";
+import * as http from "http";
 async function main() {
   const config = loadConfig();
   console.log("\uD83D\uDE80 claude-max-api-proxy v2.0.0");
@@ -3031,9 +3013,9 @@ async function main() {
   console.log(`\uD83D\uDD27 Available models: ${Object.keys(config.models).join(", ")}`);
   try {
     execSync("claude --version", { stdio: "ignore" });
-    console.log("\u2713 Claude Code CLI found");
+    console.log("✓ Claude Code CLI found");
   } catch {
-    console.error("\u2717 Claude Code CLI not found. Install with: npm install -g @anthropic-ai/claude-code");
+    console.error("✗ Claude Code CLI not found. Install with: npm install -g @anthropic-ai/claude-code");
     process.exit(1);
   }
   const queue = new RequestQueue;
@@ -3046,13 +3028,25 @@ async function main() {
   app.notFound((ctx) => {
     return ctx.json({ error: "Not found", status: 404 }, { status: 404 });
   });
-  const server = Bun.serve({
-    port: config.port,
-    hostname: config.host,
-    fetch: app.fetch
-  });
-  console.log(`
-\u2705 Server running at http://${config.host}:${config.port}`);
+  if (typeof Bun !== "undefined") {
+    const server = Bun.serve({
+      port: config.port,
+      hostname: config.host,
+      fetch: app.fetch
+    });
+    console.log(`
+✅ Server running (Bun) at http://${config.host}:${config.port}`);
+  } else {
+    const server = http.createServer(async (req, res) => {
+      const response = await app.fetch(req);
+      res.writeHead(response.status, Object.fromEntries(response.headers));
+      res.end(await response.text());
+    });
+    server.listen(config.port, config.host, () => {
+      console.log(`
+✅ Server running (Node.js) at http://${config.host}:${config.port}`);
+    });
+  }
   console.log(`\uD83D\uDCDA API Documentation:`);
   console.log(`   Anthropic: POST http://${config.host}:${config.port}/v1/messages`);
   console.log(`   OpenAI: POST http://${config.host}:${config.port}/v1/chat/completions`);

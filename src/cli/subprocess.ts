@@ -1,4 +1,4 @@
-import { spawn, type Subprocess } from 'bun';
+import { spawn, type ChildProcess } from 'child_process';
 import { StreamParser } from './stream-parser';
 import { StreamJsonEvent } from './types';
 import { SessionManager } from './session';
@@ -21,7 +21,7 @@ export interface SubprocessOptions {
 export type EventEmitter = (event: StreamJsonEvent) => void;
 
 export class CLISubprocess {
-  private process: Subprocess | null = null;
+  private process: ChildProcess | null = null;
   private sessionManager: SessionManager;
   private config: Config;
   private timeoutHandle: NodeJS.Timeout | null = null;
@@ -79,10 +79,8 @@ export class CLISubprocess {
     }
 
     // Spawn process
-    this.process = spawn(['claude', ...args], {
-      stdin: 'pipe',
-      stdout: 'pipe',
-      stderr: 'pipe',
+    this.process = spawn('claude', args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
 
     const parser = new StreamParser(onEvent);
@@ -101,68 +99,53 @@ export class CLISubprocess {
     }, timeout);
 
     // Write prompt to stdin
-    const stdin = this.process.stdin;
-    if (stdin && typeof stdin !== 'number') {
-      stdin.write(fullPrompt);
-      stdin.end();
+    if (this.process.stdin) {
+      this.process.stdin.write(fullPrompt);
+      this.process.stdin.end();
     }
 
     // Process stdout
-    const stdout = this.process.stdout;
-    if (stdout && typeof stdout !== 'number') {
-      const reader = stdout.getReader();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          const chunk = new TextDecoder().decode(value);
-          parser.processChunk(chunk);
-        }
-      } finally {
-        reader.releaseLock();
-      }
+    if (this.process.stdout) {
+      this.process.stdout.on('data', (chunk: Buffer) => {
+        const str = chunk.toString('utf-8');
+        parser.processChunk(str);
+      });
     }
 
-    parser.flush();
+    // Collect stderr
+    let stderr = '';
+    if (this.process.stderr) {
+      this.process.stderr.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString('utf-8');
+      });
+    }
 
     // Wait for process to exit
-    const exitCode = await this.process.exited;
+    return new Promise<void>((resolve) => {
+      this.process!.on('exit', (exitCode) => {
+        parser.flush();
 
-    if (!completed) {
-      clearTimeout(this.timeoutHandle);
-      this.timeoutHandle = null;
-      completed = true;
-    }
-
-    if (exitCode !== 0) {
-      const stderr_stream = this.process.stderr;
-      let stderr = '';
-      if (stderr_stream && typeof stderr_stream !== 'number') {
-        const stderrReader = stderr_stream.getReader();
-        try {
-          while (true) {
-            const { done, value } = await stderrReader.read();
-            if (done) break;
-            stderr += new TextDecoder().decode(value);
-          }
-        } finally {
-          stderrReader.releaseLock();
+        if (!completed) {
+          clearTimeout(this.timeoutHandle!);
+          this.timeoutHandle = null;
+          completed = true;
         }
-      }
 
-      if (exitCode !== 143 && exitCode !== 15) {
-        // 143 = SIGTERM, 15 = SIGTERM (normal kill)
-        onEvent({
-          type: 'error',
-          error: {
-            message: `Claude CLI exited with code ${exitCode}`,
-            details: stderr.trim(),
-          },
-        });
-      }
-    }
+        if (exitCode !== 0 && exitCode !== 143 && exitCode !== 15) {
+          // 143 = SIGTERM, 15 = SIGTERM (normal kill)
+          onEvent({
+            type: 'error',
+            error: {
+              message: `Claude CLI exited with code ${exitCode}`,
+              details: stderr.trim(),
+            },
+          });
+        }
 
-    this.process = null;
+        this.process = null;
+        resolve();
+      });
+    });
   }
 
   kill(): void {

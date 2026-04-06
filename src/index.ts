@@ -9,6 +9,7 @@ import { createAnthropicRoutes } from './routes/anthropic';
 import { createOpenAIRoutes } from './routes/openai';
 import { createSharedRoutes } from './routes/shared';
 import { execSync } from 'child_process';
+import * as http from 'http';
 
 async function main() {
   // Load config
@@ -50,14 +51,28 @@ async function main() {
     );
   });
 
-  // Start server
-  const server = Bun.serve({
-    port: config.port,
-    hostname: config.host,
-    fetch: app.fetch,
-  });
+  // Start server (support both Bun and Node.js)
+  if (typeof Bun !== 'undefined') {
+    // Running in Bun
+    const server = Bun.serve({
+      port: config.port,
+      hostname: config.host,
+      fetch: app.fetch,
+    });
+    console.log(`\n✅ Server running (Bun) at http://${config.host}:${config.port}`);
+  } else {
+    // Running in Node.js
+    const server = http.createServer(async (req, res) => {
+      const response = await app.fetch(req as any);
+      res.writeHead(response.status, Object.fromEntries(response.headers));
+      res.end(await response.text());
+    });
 
-  console.log(`\n✅ Server running at http://${config.host}:${config.port}`);
+    server.listen(config.port, config.host, () => {
+      console.log(`\n✅ Server running (Node.js) at http://${config.host}:${config.port}`);
+    });
+  }
+
   console.log(`📚 API Documentation:`);
   console.log(`   Anthropic: POST http://${config.host}:${config.port}/v1/messages`);
   console.log(`   OpenAI: POST http://${config.host}:${config.port}/v1/chat/completions`);
