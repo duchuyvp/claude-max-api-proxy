@@ -2809,22 +2809,32 @@ function createAnthropicRoutes() {
 }
 
 // src/adapters/openai-to-cli.ts
+function extractTextContent(content) {
+  if (typeof content === "string") {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    return content.filter((block) => block.type === "text").map((block) => block.text || "").join("");
+  }
+  return "";
+}
 function openaiToCli(request) {
   let systemMessage = "";
   let conversationPrompt = "";
   for (const msg of request.messages) {
+    const content = extractTextContent(msg.content);
     if (msg.role === "system") {
-      systemMessage = msg.content;
+      systemMessage = content;
     } else if (msg.role === "user") {
-      conversationPrompt += `User: ${msg.content}
+      conversationPrompt += `User: ${content}
 
 `;
     } else if (msg.role === "assistant") {
-      conversationPrompt += `Assistant: ${msg.content}
+      conversationPrompt += `Assistant: ${content}
 
 `;
     } else if (msg.role === "tool") {
-      conversationPrompt += `Tool Result: ${msg.content}
+      conversationPrompt += `Tool Result: ${content}
 
 `;
     }
@@ -2832,7 +2842,7 @@ function openaiToCli(request) {
   let lastUserMessage = "";
   for (let i = request.messages.length - 1;i >= 0; i--) {
     if (request.messages[i].role === "user") {
-      lastUserMessage = request.messages[i].content;
+      lastUserMessage = extractTextContent(request.messages[i].content);
       break;
     }
   }
@@ -2893,9 +2903,6 @@ class OpenAIResponseAdapter {
           }
         });
       }
-      if (this.isStreaming) {
-        this.writeData("data: [DONE]");
-      }
       return;
     }
     if (event.type === "message_start") {
@@ -2931,6 +2938,10 @@ class OpenAIResponseAdapter {
         this.completionTokens = evt.usage.output_tokens || 0;
       }
     } else if (event.type === "message_stop") {
+      if (this.isStreaming) {
+        this.writeData("data: [DONE]");
+      }
+    } else if (event.type === "result") {
       if (this.isStreaming) {
         this.writeData("data: [DONE]");
       }
@@ -2975,6 +2986,9 @@ function createOpenAIRoutes() {
     const body = ctx.body;
     const subprocess = ctx.subprocess;
     const config = ctx.config;
+    if (!body || !body.messages) {
+      return ctx.json({ error: "No messages provided" }, { status: 400 });
+    }
     const model = resolveModel(body.model, config);
     const isStreaming = body.stream ?? false;
     const cliPrompt = openaiToCli(body);
@@ -3061,6 +3075,11 @@ function createOpenAIRoutes() {
 }
 
 // src/routes/shared.ts
+var MODEL_METADATA = {
+  "claude-opus-4-6": { context_window: 1e6, max_tokens: 4096 },
+  "claude-sonnet-4-6": { context_window: 1e6, max_tokens: 4096 },
+  "claude-haiku-4-5-20251001": { context_window: 200000, max_tokens: 4096 }
+};
 function createSharedRoutes() {
   const router = new Hono2;
   router.get("/v1/models", (ctx) => {
@@ -3075,7 +3094,8 @@ function createSharedRoutes() {
           id: model,
           object: "model",
           owned_by: "anthropic",
-          permission: []
+          permission: [],
+          context_window: MODEL_METADATA[model]?.context_window || 200000
         }))
       });
     }
@@ -3083,7 +3103,8 @@ function createSharedRoutes() {
       data: uniqueModels.map((model) => ({
         id: model,
         type: "model",
-        display_name: model
+        display_name: model,
+        context_window: MODEL_METADATA[model]?.context_window || 200000
       }))
     });
   });

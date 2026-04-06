@@ -52,10 +52,6 @@ export class OpenAIResponseAdapter {
           }
         });
       }
-
-      if (this.isStreaming) {
-        this.writeData('data: [DONE]');
-      }
       return;
     }
 
@@ -95,6 +91,11 @@ export class OpenAIResponseAdapter {
         this.completionTokens = evt.usage.output_tokens || 0;
       }
     } else if (event.type === 'message_stop') {
+      if (this.isStreaming) {
+        this.writeData('data: [DONE]');
+      }
+    } else if (event.type === 'result') {
+      // Final result event - send DONE if streaming
       if (this.isStreaming) {
         this.writeData('data: [DONE]');
       }
