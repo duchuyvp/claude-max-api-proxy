@@ -4,8 +4,19 @@ import { AgentRunner } from '../agent/runner';
 import { resolveModel } from '../config';
 import { APIRequest } from '../types';
 
+function extractSystemText(system: any): string {
+  if (typeof system === 'string') return system;
+  if (Array.isArray(system)) {
+    return system
+      .filter((b: any) => b.type === 'text')
+      .map((b: any) => b.text || '')
+      .join('\n');
+  }
+  return '';
+}
+
 function extractPrompt(body: APIRequest): { prompt: string; system?: string } {
-  let system = body.system || '';
+  let system = extractSystemText(body.system);
   let prompt = '';
 
   for (const msg of body.messages) {
