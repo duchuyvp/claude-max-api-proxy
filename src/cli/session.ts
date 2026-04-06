@@ -1,15 +1,10 @@
 import { v4 as uuidv4 } from 'uuid';
 
 export class SessionManager {
-  private sessionMap = new Map<string, string>();
-  private defaultSessionKey = 'default';
-
+  // Generate a fresh session ID for each request
+  // The Claude CLI doesn't allow reusing session IDs across concurrent requests
   getSessionKey(userId?: string): string {
-    const key = userId || this.defaultSessionKey;
-    if (!this.sessionMap.has(key)) {
-      this.sessionMap.set(key, uuidv4());
-    }
-    return this.sessionMap.get(key)!;
+    return uuidv4();
   }
 
   clearSession(userId?: string): void {

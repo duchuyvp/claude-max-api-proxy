@@ -2,18 +2,20 @@ import { expect, test } from 'bun:test';
 import { SessionManager } from '../../src/cli/session';
 import { StreamParser } from '../../src/cli/stream-parser';
 
-test('SessionManager returns same key for same user', () => {
+test('SessionManager generates unique session IDs for each request', () => {
   const sm = new SessionManager();
   const key1 = sm.getSessionKey('user1');
   const key2 = sm.getSessionKey('user1');
-  expect(key1).toBe(key2);
+  // Each request gets a unique session ID (Claude CLI doesn't allow session reuse)
+  expect(key1).not.toBe(key2);
 });
 
-test('SessionManager returns different keys for different users', () => {
+test('SessionManager returns UUID format', () => {
   const sm = new SessionManager();
-  const key1 = sm.getSessionKey('user1');
-  const key2 = sm.getSessionKey('user2');
-  expect(key1).not.toBe(key2);
+  const key = sm.getSessionKey('user1');
+  // Should be a valid UUID v4 format
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  expect(uuidRegex.test(key)).toBe(true);
 });
 
 test('StreamParser parses newline-delimited JSON', () => {

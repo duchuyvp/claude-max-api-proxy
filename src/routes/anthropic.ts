@@ -11,7 +11,6 @@ export function createAnthropicRoutes(): Hono {
 
   router.post('/v1/messages', async (ctx) => {
     const body = (ctx as any).body as APIRequest;
-    const queue = (ctx as any).queue;
     const subprocess = (ctx as any).subprocess;
     const config = (ctx as any).config;
 
@@ -30,92 +29,108 @@ export function createAnthropicRoutes(): Hono {
       ctx.header('Content-Type', 'application/json');
     }
 
-    // Process via queue
-    return new Promise<Response>((resolve) => {
-      queue.setProcessor(async (req: QueuedRequest) => {
-        let disconnected = false;
+    // Don't use queue for now - just process directly
+    // TODO: If multiple concurrent requests needed, implement proper request queueing
+    let disconnected = false;
 
-        try {
-          // Create response stream writer for streaming responses
-          let responseWriter: WritableStreamDefaultWriter<Uint8Array> | undefined;
-          if (isStreaming) {
-            const { writable, readable } = new TransformStream<Uint8Array>();
-            responseWriter = writable.getWriter();
+    try {
+      // Create response stream writer for streaming responses
+      let responseWriter: WritableStreamDefaultWriter<Uint8Array> | undefined;
+      if (isStreaming) {
+        const { writable, readable } = new TransformStream<Uint8Array>();
+        responseWriter = writable.getWriter();
 
-            // Start reading from readable stream and send response
-            const response = new Response(readable, {
-              headers: {
-                'Content-Type': 'text/event-stream',
-                'Cache-Control': 'no-cache',
-                'Connection': 'keep-alive',
-              },
+        // Return streaming response immediately
+        const response = new Response(readable, {
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+          },
+        });
+
+        // Process in background
+        (async () => {
+          try {
+            const adapter = new AnthropicResponseAdapter(
+              model,
+              responseWriter,
+              isStreaming
+            );
+
+            const subprocessOpts: SubprocessOptions = {
+              model,
+              prompt: cliPrompt.prompt,
+              system: cliPrompt.systemMessage,
+              timeout: config.requestTimeoutMs,
+            };
+
+            await subprocess.run(subprocessOpts, (event: StreamJsonEvent) => {
+              if (!disconnected) {
+                adapter.handleEvent(event);
+              }
             });
 
-            resolve(response);
-          }
-
-          const adapter = new AnthropicResponseAdapter(
-            model,
-            responseWriter,
-            isStreaming
-          );
-
-          // Run CLI subprocess
-          const subprocessOpts: SubprocessOptions = {
-            model,
-            prompt: cliPrompt.prompt,
-            system: cliPrompt.systemMessage,
-            temperature: cliPrompt.temperature,
-            maxTokens: cliPrompt.maxTokens,
-            topP: cliPrompt.topP,
-            topK: cliPrompt.topK,
-            stopSequences: cliPrompt.stopSequences,
-            thinking: cliPrompt.thinking,
-            timeout: config.requestTimeoutMs,
-          };
-
-          await subprocess.run(subprocessOpts, (event: StreamJsonEvent) => {
-            if (!disconnected) {
-              adapter.handleEvent(event);
-            }
-          });
-
-          // Send non-streaming response
-          if (!isStreaming && !disconnected) {
-            const response = adapter.getBufferedResponse();
-            resolve(ctx.json(response));
-          }
-
-          // Close response writer if streaming
-          if (isStreaming && responseWriter && !disconnected) {
-            try {
+            if (responseWriter && !disconnected) {
               await responseWriter.close();
-            } catch {
-              // Writer may already be closed
+            }
+          } catch (error) {
+            disconnected = true;
+            if (responseWriter) {
+              try {
+                await responseWriter.close();
+              } catch {
+                // Already closed
+              }
             }
           }
+        })();
 
-          req.resolve(null);
-        } catch (error) {
-          disconnected = true;
-          if (!isStreaming) {
-            const response = ctx.json(
-              {
-                error: {
-                  message: (error as Error).message,
-                  type: 'internal_error',
-                },
-              },
-              { status: 500 }
-            );
-            resolve(response);
-          }
-          req.reject(error);
+        return response;
+      }
+
+      // Non-streaming response
+      const adapter = new AnthropicResponseAdapter(model, undefined, false);
+
+      const subprocessOpts: SubprocessOptions = {
+        model,
+        prompt: cliPrompt.prompt,
+        system: cliPrompt.systemMessage,
+        timeout: config.requestTimeoutMs,
+      };
+
+      await subprocess.run(subprocessOpts, (event: StreamJsonEvent) => {
+        if (!disconnected) {
+          adapter.handleEvent(event);
         }
       });
 
-      queue.enqueue('anthropic', body);
-    });
+      if (!disconnected) {
+        const response = adapter.getBufferedResponse();
+        return ctx.json(response);
+      }
+
+      // If disconnected, return error
+      return ctx.json(
+        {
+          error: {
+            message: 'Request was disconnected',
+            type: 'client_error',
+          },
+        },
+        { status: 500 }
+      );
+    } catch (error) {
+      return ctx.json(
+        {
+          error: {
+            message: (error as Error).message,
+            type: 'internal_error',
+          },
+        },
+        { status: 500 }
+      );
+    }
   });
 
   return router;

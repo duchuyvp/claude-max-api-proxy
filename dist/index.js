@@ -2481,14 +2481,8 @@ ${fullPrompt}`;
 
 // src/cli/session.ts
 class SessionManager {
-  sessionMap = new Map;
-  defaultSessionKey = "default";
   getSessionKey(userId) {
-    const key = userId || this.defaultSessionKey;
-    if (!this.sessionMap.has(key)) {
-      this.sessionMap.set(key, v4());
-    }
-    return this.sessionMap.get(key);
+    return v4();
   }
   clearSession(userId) {
     const key = userId || this.defaultSessionKey;
@@ -2727,7 +2721,6 @@ function createAnthropicRoutes() {
   const router = new Hono2;
   router.post("/v1/messages", async (ctx) => {
     const body = ctx.body;
-    const queue = ctx.queue;
     const subprocess = ctx.subprocess;
     const config = ctx.config;
     const model = resolveModel(body.model, config);
@@ -2740,67 +2733,77 @@ function createAnthropicRoutes() {
     } else {
       ctx.header("Content-Type", "application/json");
     }
-    return new Promise((resolve) => {
-      queue.setProcessor(async (req) => {
-        let disconnected = false;
-        try {
-          let responseWriter;
-          if (isStreaming) {
-            const { writable, readable } = new TransformStream;
-            responseWriter = writable.getWriter();
-            const response = new Response(readable, {
-              headers: {
-                "Content-Type": "text/event-stream",
-                "Cache-Control": "no-cache",
-                Connection: "keep-alive"
+    let disconnected = false;
+    try {
+      let responseWriter;
+      if (isStreaming) {
+        const { writable, readable } = new TransformStream;
+        responseWriter = writable.getWriter();
+        const response = new Response(readable, {
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive"
+          }
+        });
+        (async () => {
+          try {
+            const adapter2 = new AnthropicResponseAdapter(model, responseWriter, isStreaming);
+            const subprocessOpts2 = {
+              model,
+              prompt: cliPrompt.prompt,
+              system: cliPrompt.systemMessage,
+              timeout: config.requestTimeoutMs
+            };
+            await subprocess.run(subprocessOpts2, (event) => {
+              if (!disconnected) {
+                adapter2.handleEvent(event);
               }
             });
-            resolve(response);
-          }
-          const adapter = new AnthropicResponseAdapter(model, responseWriter, isStreaming);
-          const subprocessOpts = {
-            model,
-            prompt: cliPrompt.prompt,
-            system: cliPrompt.systemMessage,
-            temperature: cliPrompt.temperature,
-            maxTokens: cliPrompt.maxTokens,
-            topP: cliPrompt.topP,
-            topK: cliPrompt.topK,
-            stopSequences: cliPrompt.stopSequences,
-            thinking: cliPrompt.thinking,
-            timeout: config.requestTimeoutMs
-          };
-          await subprocess.run(subprocessOpts, (event) => {
-            if (!disconnected) {
-              adapter.handleEvent(event);
-            }
-          });
-          if (!isStreaming && !disconnected) {
-            const response = adapter.getBufferedResponse();
-            resolve(ctx.json(response));
-          }
-          if (isStreaming && responseWriter && !disconnected) {
-            try {
+            if (responseWriter && !disconnected) {
               await responseWriter.close();
-            } catch {}
+            }
+          } catch (error) {
+            disconnected = true;
+            if (responseWriter) {
+              try {
+                await responseWriter.close();
+              } catch {}
+            }
           }
-          req.resolve(null);
-        } catch (error) {
-          disconnected = true;
-          if (!isStreaming) {
-            const response = ctx.json({
-              error: {
-                message: error.message,
-                type: "internal_error"
-              }
-            }, { status: 500 });
-            resolve(response);
-          }
-          req.reject(error);
+        })();
+        return response;
+      }
+      const adapter = new AnthropicResponseAdapter(model, undefined, false);
+      const subprocessOpts = {
+        model,
+        prompt: cliPrompt.prompt,
+        system: cliPrompt.systemMessage,
+        timeout: config.requestTimeoutMs
+      };
+      await subprocess.run(subprocessOpts, (event) => {
+        if (!disconnected) {
+          adapter.handleEvent(event);
         }
       });
-      queue.enqueue("anthropic", body);
-    });
+      if (!disconnected) {
+        const response = adapter.getBufferedResponse();
+        return ctx.json(response);
+      }
+      return ctx.json({
+        error: {
+          message: "Request was disconnected",
+          type: "client_error"
+        }
+      }, { status: 500 });
+    } catch (error) {
+      return ctx.json({
+        error: {
+          message: error.message,
+          type: "internal_error"
+        }
+      }, { status: 500 });
+    }
   });
   return router;
 }
@@ -2970,7 +2973,6 @@ function createOpenAIRoutes() {
   const router = new Hono2;
   router.post("/v1/chat/completions", async (ctx) => {
     const body = ctx.body;
-    const queue = ctx.queue;
     const subprocess = ctx.subprocess;
     const config = ctx.config;
     const model = resolveModel(body.model, config);
@@ -2983,65 +2985,77 @@ function createOpenAIRoutes() {
     } else {
       ctx.header("Content-Type", "application/json");
     }
-    return new Promise((resolve) => {
-      queue.setProcessor(async (req) => {
-        let disconnected = false;
-        try {
-          let responseWriter;
-          if (isStreaming) {
-            const { writable, readable } = new TransformStream;
-            responseWriter = writable.getWriter();
-            const response = new Response(readable, {
-              headers: {
-                "Content-Type": "text/event-stream",
-                "Cache-Control": "no-cache",
-                Connection: "keep-alive"
+    let disconnected = false;
+    try {
+      let responseWriter;
+      if (isStreaming) {
+        const { writable, readable } = new TransformStream;
+        responseWriter = writable.getWriter();
+        const response = new Response(readable, {
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive"
+          }
+        });
+        (async () => {
+          try {
+            const adapter2 = new OpenAIResponseAdapter(model, responseWriter, isStreaming);
+            const subprocessOpts2 = {
+              model,
+              prompt: cliPrompt.prompt,
+              system: cliPrompt.systemMessage,
+              timeout: config.requestTimeoutMs
+            };
+            await subprocess.run(subprocessOpts2, (event) => {
+              if (!disconnected) {
+                adapter2.handleEvent(event);
               }
             });
-            resolve(response);
-          }
-          const adapter = new OpenAIResponseAdapter(model, responseWriter, isStreaming);
-          const subprocessOpts = {
-            model,
-            prompt: cliPrompt.prompt,
-            system: cliPrompt.systemMessage,
-            temperature: cliPrompt.temperature,
-            maxTokens: cliPrompt.maxTokens,
-            topP: cliPrompt.topP,
-            stopSequences: cliPrompt.stopSequences,
-            timeout: config.requestTimeoutMs
-          };
-          await subprocess.run(subprocessOpts, (event) => {
-            if (!disconnected) {
-              adapter.handleEvent(event);
-            }
-          });
-          if (!isStreaming && !disconnected) {
-            const response = adapter.getBufferedResponse();
-            resolve(ctx.json(response));
-          }
-          if (isStreaming && responseWriter && !disconnected) {
-            try {
+            if (responseWriter && !disconnected) {
               await responseWriter.close();
-            } catch {}
+            }
+          } catch (error) {
+            disconnected = true;
+            if (responseWriter) {
+              try {
+                await responseWriter.close();
+              } catch {}
+            }
           }
-          req.resolve(null);
-        } catch (error) {
-          disconnected = true;
-          if (!isStreaming) {
-            const response = ctx.json({
-              error: {
-                message: error.message,
-                type: "server_error"
-              }
-            }, { status: 500 });
-            resolve(response);
-          }
-          req.reject(error);
+        })();
+        return response;
+      }
+      const adapter = new OpenAIResponseAdapter(model, undefined, false);
+      const subprocessOpts = {
+        model,
+        prompt: cliPrompt.prompt,
+        system: cliPrompt.systemMessage,
+        timeout: config.requestTimeoutMs
+      };
+      await subprocess.run(subprocessOpts, (event) => {
+        if (!disconnected) {
+          adapter.handleEvent(event);
         }
       });
-      queue.enqueue("openai", body);
-    });
+      if (!disconnected) {
+        const response = adapter.getBufferedResponse();
+        return ctx.json(response);
+      }
+      return ctx.json({
+        error: {
+          message: "Request was disconnected",
+          type: "server_error"
+        }
+      }, { status: 500 });
+    } catch (error) {
+      return ctx.json({
+        error: {
+          message: error.message,
+          type: "server_error"
+        }
+      }, { status: 500 });
+    }
   });
   return router;
 }
