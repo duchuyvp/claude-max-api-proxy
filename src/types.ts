@@ -48,7 +48,6 @@ export interface APIRequest {
   stream?: boolean;
   metadata?: Record<string, unknown>;
   thinking?: { type: string; budget_tokens?: number };
-  conversation_id?: string;
 }
 
 export interface APIResponse {
