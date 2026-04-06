@@ -1,0 +1,41 @@
+{
+  "name": "claude-max-api-proxy",
+  "version": "2.0.0",
+  "description": "OpenAI + Anthropic API proxy for Claude Max via Claude Code CLI",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "claude-max-api": "dist/index.js"
+  },
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "build": "bun build src/index.ts --outdir dist --format esm",
+    "start": "node dist/index.js",
+    "test": "bun test",
+    "test:unit": "bun test tests/unit/**/*.test.ts",
+    "test:integration": "bun test tests/integration/**/*.test.ts",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "^4.0.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "keywords": [
+    "claude",
+    "anthropic",
+    "openai",
+    "api",
+    "proxy",
+    "llm"
+  ],
+  "author": "huynguyen",
+  "license": "MIT"
+}
