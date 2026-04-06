@@ -80,7 +80,6 @@ export class AnthropicResponseAdapter {
       });
 
       this.sendEvent('message_stop', { type: 'message_stop' });
-      this.writeData('[DONE]');
       return;
     }
 
@@ -169,6 +168,11 @@ export class AnthropicResponseAdapter {
     } else if (event.type === 'message_stop') {
       if (this.isStreaming) {
         this.sendEvent('message_stop', { type: 'message_stop' });
+        this.writeData('[DONE]');
+      }
+    } else if (event.type === 'result') {
+      // Final result event - send DONE if streaming
+      if (this.isStreaming) {
         this.writeData('[DONE]');
       }
     }

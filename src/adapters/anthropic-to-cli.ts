@@ -11,6 +11,20 @@ export interface CliPromptInput {
   thinking?: { type: string; budget_tokens?: number };
 }
 
+// Extract text content from message content (can be string or array of content blocks)
+function extractTextContent(content: string | any[]): string {
+  if (typeof content === 'string') {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    return content
+      .filter((block) => block.type === 'text')
+      .map((block) => block.text || '')
+      .join('');
+  }
+  return '';
+}
+
 export function anthropicToCli(request: APIRequest): CliPromptInput {
   let systemMessage = request.system;
 
@@ -18,10 +32,12 @@ export function anthropicToCli(request: APIRequest): CliPromptInput {
   let conversationPrompt = '';
 
   for (const msg of request.messages) {
+    const content = extractTextContent(msg.content);
+
     if (msg.role === 'system') {
-      systemMessage = msg.content as string;
+      systemMessage = content;
     } else if (msg.role === 'user') {
-      conversationPrompt += `User: ${msg.content}\n\n`;
+      conversationPrompt += `User: ${content}\n\n`;
     } else if (msg.role === 'assistant') {
       if (typeof msg.content === 'string') {
         conversationPrompt += `Assistant: ${msg.content}\n\n`;
@@ -44,7 +60,7 @@ export function anthropicToCli(request: APIRequest): CliPromptInput {
   let lastUserMessage = '';
   for (let i = request.messages.length - 1; i >= 0; i--) {
     if (request.messages[i].role === 'user') {
-      lastUserMessage = request.messages[i].content as string;
+      lastUserMessage = extractTextContent(request.messages[i].content);
       break;
     }
   }
