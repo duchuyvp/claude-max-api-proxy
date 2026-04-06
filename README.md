@@ -40,10 +40,18 @@ npm install -g claude-max-api-proxy
 Or run from source:
 
 ```bash
-git clone https://github.com/huynguyen/claude-max-api-proxy.git
+git clone https://github.com/duchuyvp/claude-max-api-proxy.git
 cd claude-max-api-proxy
 bun install
-bun run src/index.ts
+bun run dev    # Bun runtime
+```
+
+Or with Node.js:
+
+```bash
+npm install
+npm run build
+node dist/index.js
 ```
 
 ## Quick Start
@@ -130,7 +138,30 @@ Content-Type: application/json
 }
 ```
 
+### Anthropic Embeddings API
+```
+POST /v1/embed
+Content-Type: application/json
+
+{
+  "model": "claude-opus-4-6",
+  "input": "Text to embed"
+}
+```
+
+### OpenAI Embeddings API
+```
+POST /v1/embeddings
+Content-Type: application/json
+
+{
+  "model": "claude-opus-4-6",
+  "input": "Text to embed"
+}
+```
+
 ### Models Listing
+
 ```
 GET /v1/models
 ```
