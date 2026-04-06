@@ -7,7 +7,7 @@ export class SessionManager {
   getSessionKey(userId?: string): string {
     const key = userId || this.defaultSessionKey;
     if (!this.sessionMap.has(key)) {
-      this.sessionMap.set(key, `session-${uuidv4()}`);
+      this.sessionMap.set(key, uuidv4());
     }
     return this.sessionMap.get(key)!;
   }

@@ -36,41 +36,16 @@ export class CLISubprocess {
     const timeout = options.timeout || this.config.requestTimeoutMs;
 
     // Build CLI arguments
-    const args = ['--output-format', 'stream-json', '--session-key', sessionKey];
-
-    args.push('--model', options.model);
-
-    if (options.maxTokens) {
-      args.push('--max-tokens', String(options.maxTokens));
-    }
-
-    if (options.temperature !== undefined) {
-      args.push('--temperature', String(options.temperature));
-    }
-
-    if (options.topP !== undefined) {
-      args.push('--top-p', String(options.topP));
-    }
-
-    if (options.topK !== undefined) {
-      args.push('--top-k', String(options.topK));
-    }
-
-    if (options.stopSequences && options.stopSequences.length > 0) {
-      options.stopSequences.forEach((seq) => {
-        args.push('--stop-sequence', seq);
-      });
-    }
-
-    if (options.thinking) {
-      args.push('--thinking', 'enabled');
-      if (options.thinking.budget_tokens) {
-        args.push(
-          '--thinking-budget-tokens',
-          String(options.thinking.budget_tokens)
-        );
-      }
-    }
+    // Note: --verbose is required when --output-format=stream-json is piped
+    // Claude CLI only supports: --model, --session-id, --output-format, --verbose, --print
+    // Other parameters (maxTokens, temperature, etc.) are API-specific and ignored
+    const args = [
+      '--print',
+      '--output-format', 'stream-json',
+      '--verbose',
+      '--session-id', sessionKey,
+      '--model', options.model,
+    ];
 
     // Build full prompt with system message
     let fullPrompt = options.prompt;

@@ -17,6 +17,48 @@ export class OpenAIResponseAdapter {
   }
 
   handleEvent(event: StreamJsonEvent): void {
+    // Handle assistant event from --verbose output (full message)
+    if (event.type === 'assistant') {
+      const evt = event as any;
+      const message = evt.message || evt;
+
+      if (message.usage) {
+        this.promptTokens = message.usage.input_tokens || 0;
+        this.completionTokens = message.usage.output_tokens || 0;
+      }
+
+      // Extract text content
+      if (message.content && Array.isArray(message.content)) {
+        message.content.forEach((block: any) => {
+          if (block.type === 'text' && block.text) {
+            this.bufferedContent += block.text;
+
+            if (this.isStreaming) {
+              const chunk = {
+                id: `chatcmpl_${Date.now()}`,
+                object: 'text_completion.chunk',
+                created: Math.floor(Date.now() / 1000),
+                model: this.model,
+                choices: [
+                  {
+                    index: 0,
+                    delta: { content: block.text },
+                    finish_reason: null,
+                  },
+                ],
+              };
+              this.writeData(`data: ${JSON.stringify(chunk)}`);
+            }
+          }
+        });
+      }
+
+      if (this.isStreaming) {
+        this.writeData('data: [DONE]');
+      }
+      return;
+    }
+
     if (event.type === 'message_start') {
       // Initialize
       const evt = event as any;

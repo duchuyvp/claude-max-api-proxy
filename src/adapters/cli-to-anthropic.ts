@@ -20,6 +20,70 @@ export class AnthropicResponseAdapter {
   }
 
   handleEvent(event: StreamJsonEvent): void {
+    // Handle assistant event from --verbose output (full message)
+    if (event.type === 'assistant') {
+      const evt = event as any;
+      const message = evt.message || evt;
+
+      this.messageId = message.id || 'msg_' + Date.now();
+      this.usage = message.usage || { input_tokens: 0, output_tokens: 0 };
+
+      // Extract content from message
+      if (message.content && Array.isArray(message.content)) {
+        this.bufferedContent = message.content;
+      }
+
+      if (!this.isStreaming) {
+        return;
+      }
+
+      // For streaming, emit as stream events
+      this.sendEvent('message_start', {
+        type: 'message_start',
+        message: {
+          id: this.messageId,
+          type: 'message',
+          role: 'assistant',
+          model: this.model,
+          content: [],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: this.usage,
+        },
+      });
+
+      message.content?.forEach((block: any, index: number) => {
+        this.sendEvent('content_block_start', {
+          type: 'content_block_start',
+          index,
+          content_block: { type: block.type },
+        });
+
+        if (block.type === 'text' && block.text) {
+          this.sendEvent('content_block_delta', {
+            type: 'content_block_delta',
+            index,
+            delta: { type: 'text_delta', text: block.text },
+          });
+        }
+
+        this.sendEvent('content_block_stop', {
+          type: 'content_block_stop',
+          index,
+        });
+      });
+
+      this.sendEvent('message_delta', {
+        type: 'message_delta',
+        delta: { stop_reason: message.stop_reason || 'end_turn' },
+        usage: this.usage,
+      });
+
+      this.sendEvent('message_stop', { type: 'message_stop' });
+      this.writeData('[DONE]');
+      return;
+    }
+
     if (event.type === 'message_start') {
       const evt = event as any;
       this.messageId = evt.message?.id || 'msg_' + Date.now();

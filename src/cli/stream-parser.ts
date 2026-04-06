@@ -32,12 +32,16 @@ export class StreamParser {
           const event = JSON.parse(line) as StreamJsonEvent;
           this.onEvent(event);
         } catch (e) {
-          console.error(`Failed to parse JSON: ${line}`, e);
-          this.onEvent({
-            type: 'parse_error',
-            error: (e as Error).message,
-            raw: line,
-          });
+          // Silently skip non-JSON lines (system output, etc.)
+          // Only emit event if this looks like it should be parsed
+          if (line.startsWith('{')) {
+            console.error(`Failed to parse JSON: ${line}`, e);
+            this.onEvent({
+              type: 'parse_error',
+              error: (e as Error).message,
+              raw: line,
+            });
+          }
         }
       }
     }

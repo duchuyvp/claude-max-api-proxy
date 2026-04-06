@@ -2359,12 +2359,14 @@ class StreamParser {
           const event = JSON.parse(line);
           this.onEvent(event);
         } catch (e) {
-          console.error(`Failed to parse JSON: ${line}`, e);
-          this.onEvent({
-            type: "parse_error",
-            error: e.message,
-            raw: line
-          });
+          if (line.startsWith("{")) {
+            console.error(`Failed to parse JSON: ${line}`, e);
+            this.onEvent({
+              type: "parse_error",
+              error: e.message,
+              raw: line
+            });
+          }
         }
       }
     }
@@ -2395,31 +2397,16 @@ class CLISubprocess {
   async run(options, onEvent) {
     const sessionKey = this.sessionManager.getSessionKey(options.userId);
     const timeout = options.timeout || this.config.requestTimeoutMs;
-    const args = ["--output-format", "stream-json", "--session-key", sessionKey];
-    args.push("--model", options.model);
-    if (options.maxTokens) {
-      args.push("--max-tokens", String(options.maxTokens));
-    }
-    if (options.temperature !== undefined) {
-      args.push("--temperature", String(options.temperature));
-    }
-    if (options.topP !== undefined) {
-      args.push("--top-p", String(options.topP));
-    }
-    if (options.topK !== undefined) {
-      args.push("--top-k", String(options.topK));
-    }
-    if (options.stopSequences && options.stopSequences.length > 0) {
-      options.stopSequences.forEach((seq) => {
-        args.push("--stop-sequence", seq);
-      });
-    }
-    if (options.thinking) {
-      args.push("--thinking", "enabled");
-      if (options.thinking.budget_tokens) {
-        args.push("--thinking-budget-tokens", String(options.thinking.budget_tokens));
-      }
-    }
+    const args = [
+      "--print",
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--session-id",
+      sessionKey,
+      "--model",
+      options.model
+    ];
     let fullPrompt = options.prompt;
     if (options.system) {
       fullPrompt = `<system>
@@ -2499,7 +2486,7 @@ class SessionManager {
   getSessionKey(userId) {
     const key = userId || this.defaultSessionKey;
     if (!this.sessionMap.has(key)) {
-      this.sessionMap.set(key, `session-${v4()}`);
+      this.sessionMap.set(key, v4());
     }
     return this.sessionMap.get(key);
   }
@@ -2581,6 +2568,57 @@ class AnthropicResponseAdapter {
     this.encoder = new TextEncoder;
   }
   handleEvent(event) {
+    if (event.type === "assistant") {
+      const evt = event;
+      const message = evt.message || evt;
+      this.messageId = message.id || "msg_" + Date.now();
+      this.usage = message.usage || { input_tokens: 0, output_tokens: 0 };
+      if (message.content && Array.isArray(message.content)) {
+        this.bufferedContent = message.content;
+      }
+      if (!this.isStreaming) {
+        return;
+      }
+      this.sendEvent("message_start", {
+        type: "message_start",
+        message: {
+          id: this.messageId,
+          type: "message",
+          role: "assistant",
+          model: this.model,
+          content: [],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: this.usage
+        }
+      });
+      message.content?.forEach((block, index) => {
+        this.sendEvent("content_block_start", {
+          type: "content_block_start",
+          index,
+          content_block: { type: block.type }
+        });
+        if (block.type === "text" && block.text) {
+          this.sendEvent("content_block_delta", {
+            type: "content_block_delta",
+            index,
+            delta: { type: "text_delta", text: block.text }
+          });
+        }
+        this.sendEvent("content_block_stop", {
+          type: "content_block_stop",
+          index
+        });
+      });
+      this.sendEvent("message_delta", {
+        type: "message_delta",
+        delta: { stop_reason: message.stop_reason || "end_turn" },
+        usage: this.usage
+      });
+      this.sendEvent("message_stop", { type: "message_stop" });
+      this.writeData("[DONE]");
+      return;
+    }
     if (event.type === "message_start") {
       const evt = event;
       this.messageId = evt.message?.id || "msg_" + Date.now();
@@ -2822,6 +2860,41 @@ class OpenAIResponseAdapter {
     this.encoder = new TextEncoder;
   }
   handleEvent(event) {
+    if (event.type === "assistant") {
+      const evt = event;
+      const message = evt.message || evt;
+      if (message.usage) {
+        this.promptTokens = message.usage.input_tokens || 0;
+        this.completionTokens = message.usage.output_tokens || 0;
+      }
+      if (message.content && Array.isArray(message.content)) {
+        message.content.forEach((block) => {
+          if (block.type === "text" && block.text) {
+            this.bufferedContent += block.text;
+            if (this.isStreaming) {
+              const chunk = {
+                id: `chatcmpl_${Date.now()}`,
+                object: "text_completion.chunk",
+                created: Math.floor(Date.now() / 1000),
+                model: this.model,
+                choices: [
+                  {
+                    index: 0,
+                    delta: { content: block.text },
+                    finish_reason: null
+                  }
+                ]
+              };
+              this.writeData(`data: ${JSON.stringify(chunk)}`);
+            }
+          }
+        });
+      }
+      if (this.isStreaming) {
+        this.writeData("data: [DONE]");
+      }
+      return;
+    }
     if (event.type === "message_start") {
       const evt = event;
       if (evt.message?.usage) {
