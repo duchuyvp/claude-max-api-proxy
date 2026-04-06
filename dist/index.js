@@ -3003,9 +3003,78 @@ function createSharedRoutes() {
   return router;
 }
 
+// src/routes/embeddings.ts
+function createEmbeddingsRoutes() {
+  const router = new Hono2;
+  router.post("/v1/embeddings", async (ctx) => {
+    const body = ctx.body;
+    if (!body.input) {
+      return ctx.json({ error: { message: "input is required", type: "invalid_request_error" } }, { status: 400 });
+    }
+    const model = resolveModel(body.model, ctx.config);
+    const inputs = Array.isArray(body.input) ? body.input : [body.input];
+    const embeddings = inputs.map((text, index) => ({
+      object: "embedding",
+      index,
+      embedding: generateMockEmbedding(text)
+    }));
+    return ctx.json({
+      object: "list",
+      data: embeddings,
+      model,
+      usage: {
+        prompt_tokens: inputs.reduce((sum, text) => sum + Math.ceil(text.length / 4), 0),
+        total_tokens: inputs.reduce((sum, text) => sum + Math.ceil(text.length / 4), 0)
+      }
+    });
+  });
+  router.post("/v1/embed", async (ctx) => {
+    const body = ctx.body;
+    if (!body.input) {
+      return ctx.json({ error: { message: "input is required", type: "invalid_request_error" } }, { status: 400 });
+    }
+    const model = resolveModel(body.model, ctx.config);
+    const input = Array.isArray(body.input) ? body.input[0] : body.input;
+    return ctx.json({
+      embedding: generateMockEmbedding(input),
+      model,
+      usage: {
+        input_tokens: Math.ceil(input.length / 4)
+      }
+    });
+  });
+  return router;
+}
+function generateMockEmbedding(text) {
+  const seed = text.split("").reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  const embedding = [];
+  for (let i = 0;i < 1536; i++) {
+    const random = Math.sin(seed + i) * 1e4;
+    embedding.push((random - Math.floor(random)) * 2 - 1);
+  }
+  return embedding;
+}
+
 // src/index.ts
 import { execSync } from "child_process";
 import * as http from "http";
+async function nodeRequestToFetchRequest(req, host) {
+  const url = new URL(req.url || "/", `http://${host}`);
+  const body = req.method !== "GET" && req.method !== "HEAD" ? Buffer.concat(await collectRequestBody(req)) : undefined;
+  return new Request(url.toString(), {
+    method: req.method,
+    headers: req.headers,
+    body: body?.length ? body : undefined
+  });
+}
+function collectRequestBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => resolve(chunks));
+    req.on("error", reject);
+  });
+}
 async function main() {
   const config = loadConfig();
   console.log("\uD83D\uDE80 claude-max-api-proxy v2.0.0");
@@ -3024,6 +3093,7 @@ async function main() {
   const app = createServer(config, queue, subprocess, sessionManager);
   app.route("/", createAnthropicRoutes());
   app.route("/", createOpenAIRoutes());
+  app.route("/", createEmbeddingsRoutes());
   app.route("/", createSharedRoutes());
   app.notFound((ctx) => {
     return ctx.json({ error: "Not found", status: 404 }, { status: 404 });
@@ -3038,9 +3108,16 @@ async function main() {
 ✅ Server running (Bun) at http://${config.host}:${config.port}`);
   } else {
     const server = http.createServer(async (req, res) => {
-      const response = await app.fetch(req);
-      res.writeHead(response.status, Object.fromEntries(response.headers));
-      res.end(await response.text());
+      try {
+        const fetchRequest = await nodeRequestToFetchRequest(req, `${config.host}:${config.port}`);
+        const response = await app.fetch(fetchRequest);
+        res.writeHead(response.status, Object.fromEntries(response.headers));
+        res.end(await response.text());
+      } catch (error) {
+        console.error("Server error:", error);
+        res.writeHead(500);
+        res.end(JSON.stringify({ error: "Internal server error" }));
+      }
     });
     server.listen(config.port, config.host, () => {
       console.log(`
@@ -3048,8 +3125,10 @@ async function main() {
     });
   }
   console.log(`\uD83D\uDCDA API Documentation:`);
-  console.log(`   Anthropic: POST http://${config.host}:${config.port}/v1/messages`);
-  console.log(`   OpenAI: POST http://${config.host}:${config.port}/v1/chat/completions`);
+  console.log(`   Anthropic Messages: POST http://${config.host}:${config.port}/v1/messages`);
+  console.log(`   Anthropic Embeddings: POST http://${config.host}:${config.port}/v1/embed`);
+  console.log(`   OpenAI Chat: POST http://${config.host}:${config.port}/v1/chat/completions`);
+  console.log(`   OpenAI Embeddings: POST http://${config.host}:${config.port}/v1/embeddings`);
   console.log(`   Models: GET http://${config.host}:${config.port}/v1/models`);
   console.log(`   Health: GET http://${config.host}:${config.port}/health`);
   process.on("SIGINT", () => {

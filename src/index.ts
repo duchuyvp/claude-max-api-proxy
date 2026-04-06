@@ -8,8 +8,36 @@ import { SessionManager } from './cli/session';
 import { createAnthropicRoutes } from './routes/anthropic';
 import { createOpenAIRoutes } from './routes/openai';
 import { createSharedRoutes } from './routes/shared';
+import { createEmbeddingsRoutes } from './routes/embeddings';
 import { execSync } from 'child_process';
 import * as http from 'http';
+
+// Convert Node.js request to Fetch API Request
+async function nodeRequestToFetchRequest(
+  req: http.IncomingMessage,
+  host: string
+): Promise<Request> {
+  const url = new URL(req.url || '/', `http://${host}`);
+  const body =
+    req.method !== 'GET' && req.method !== 'HEAD'
+      ? Buffer.concat(await collectRequestBody(req))
+      : undefined;
+
+  return new Request(url.toString(), {
+    method: req.method,
+    headers: req.headers as Record<string, string>,
+    body: body?.length ? body : undefined,
+  });
+}
+
+function collectRequestBody(req: http.IncomingMessage): Promise<Buffer[]> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => resolve(chunks));
+    req.on('error', reject);
+  });
+}
 
 async function main() {
   // Load config
@@ -41,6 +69,7 @@ async function main() {
   // Register routes
   app.route('/', createAnthropicRoutes());
   app.route('/', createOpenAIRoutes());
+  app.route('/', createEmbeddingsRoutes());
   app.route('/', createSharedRoutes());
 
   // 404 handler
@@ -63,9 +92,19 @@ async function main() {
   } else {
     // Running in Node.js
     const server = http.createServer(async (req, res) => {
-      const response = await app.fetch(req as any);
-      res.writeHead(response.status, Object.fromEntries(response.headers));
-      res.end(await response.text());
+      try {
+        const fetchRequest = await nodeRequestToFetchRequest(
+          req,
+          `${config.host}:${config.port}`
+        );
+        const response = await app.fetch(fetchRequest);
+        res.writeHead(response.status, Object.fromEntries(response.headers));
+        res.end(await response.text());
+      } catch (error) {
+        console.error('Server error:', error);
+        res.writeHead(500);
+        res.end(JSON.stringify({ error: 'Internal server error' }));
+      }
     });
 
     server.listen(config.port, config.host, () => {
@@ -74,8 +113,10 @@ async function main() {
   }
 
   console.log(`📚 API Documentation:`);
-  console.log(`   Anthropic: POST http://${config.host}:${config.port}/v1/messages`);
-  console.log(`   OpenAI: POST http://${config.host}:${config.port}/v1/chat/completions`);
+  console.log(`   Anthropic Messages: POST http://${config.host}:${config.port}/v1/messages`);
+  console.log(`   Anthropic Embeddings: POST http://${config.host}:${config.port}/v1/embed`);
+  console.log(`   OpenAI Chat: POST http://${config.host}:${config.port}/v1/chat/completions`);
+  console.log(`   OpenAI Embeddings: POST http://${config.host}:${config.port}/v1/embeddings`);
   console.log(`   Models: GET http://${config.host}:${config.port}/v1/models`);
   console.log(`   Health: GET http://${config.host}:${config.port}/health`);
 
