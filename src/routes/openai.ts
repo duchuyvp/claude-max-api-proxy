@@ -1,17 +1,38 @@
 import { Hono } from 'hono';
-import { openaiToCli } from '../adapters/openai-to-cli';
 import { OpenAIResponseAdapter } from '../adapters/cli-to-openai';
-import { SubprocessOptions } from '../cli/subprocess';
-import { StreamJsonEvent } from '../cli/types';
+import { AgentRunner } from '../agent/runner';
 import { resolveModel } from '../config';
 import { APIRequest } from '../types';
+
+function extractPrompt(body: APIRequest): { prompt: string; system?: string } {
+  let system = '';
+  let prompt = '';
+
+  for (const msg of body.messages) {
+    const content = typeof msg.content === 'string'
+      ? msg.content
+      : Array.isArray(msg.content)
+        ? msg.content.filter((b: any) => b.type === 'text').map((b: any) => b.text || '').join('')
+        : '';
+
+    if (msg.role === 'system') {
+      system = content;
+    } else if (msg.role === 'user') {
+      prompt += `User: ${content}\n\n`;
+    } else if (msg.role === 'assistant') {
+      prompt += `Assistant: ${content}\n\n`;
+    }
+  }
+
+  return { prompt: prompt || 'Continue.', system: system || undefined };
+}
 
 export function createOpenAIRoutes(): Hono {
   const router = new Hono();
 
   router.post('/v1/chat/completions', async (ctx) => {
     const body = (ctx as any).body as APIRequest;
-    const subprocess = (ctx as any).subprocess;
+    const agent = (ctx as any).agent as AgentRunner;
     const config = (ctx as any).config;
 
     if (!body || !body.messages) {
@@ -20,30 +41,14 @@ export function createOpenAIRoutes(): Hono {
 
     const model = resolveModel(body.model, config);
     const isStreaming = body.stream ?? false;
-
-    // Convert API request to CLI format
-    const cliPrompt = openaiToCli(body);
-
-    // Set up response headers
-    if (isStreaming) {
-      ctx.header('Content-Type', 'text/event-stream');
-      ctx.header('Cache-Control', 'no-cache');
-      ctx.header('Connection', 'keep-alive');
-    } else {
-      ctx.header('Content-Type', 'application/json');
-    }
-
-    // Don't use queue for now - just process directly
-    let disconnected = false;
+    const { prompt, system } = extractPrompt(body);
 
     try {
-      // Create response stream writer for streaming responses
-      let responseWriter: WritableStreamDefaultWriter<Uint8Array> | undefined;
       if (isStreaming) {
         const { writable, readable } = new TransformStream<Uint8Array>();
-        responseWriter = writable.getWriter();
+        const writer = writable.getWriter();
+        const adapter = new OpenAIResponseAdapter(model, writer);
 
-        // Return streaming response immediately
         const response = new Response(readable, {
           headers: {
             'Content-Type': 'text/event-stream',
@@ -52,85 +57,43 @@ export function createOpenAIRoutes(): Hono {
           },
         });
 
-        // Process in background
         (async () => {
           try {
-            const adapter = new OpenAIResponseAdapter(
-              model,
-              responseWriter,
-              isStreaming
-            );
-
-            const subprocessOpts: SubprocessOptions = {
-              model,
-              prompt: cliPrompt.prompt,
-              system: cliPrompt.systemMessage,
-              timeout: config.requestTimeoutMs,
-            };
-
-            await subprocess.run(subprocessOpts, (event: StreamJsonEvent) => {
-              if (!disconnected) {
-                adapter.handleEvent(event);
-              }
-            });
-
-            if (responseWriter && !disconnected) {
-              await responseWriter.close();
-            }
-          } catch (error) {
-            disconnected = true;
-            if (responseWriter) {
-              try {
-                await responseWriter.close();
-              } catch {
-                // Already closed
+            for await (const event of agent.run({ model, prompt, system, timeout: config.requestTimeoutMs })) {
+              if (event.type === 'text') {
+                adapter.writeStreamChunk(event.text);
+              } else if (event.type === 'done') {
+                adapter.writeStreamEnd();
               }
             }
+            await writer.close();
+          } catch {
+            try { await writer.close(); } catch {}
           }
         })();
 
         return response;
       }
 
-      // Non-streaming response
-      const adapter = new OpenAIResponseAdapter(model, undefined, false);
+      // Non-streaming
+      let fullText = '';
+      let messageId = '';
+      let usage = { input_tokens: 0, output_tokens: 0 };
 
-      const subprocessOpts: SubprocessOptions = {
-        model,
-        prompt: cliPrompt.prompt,
-        system: cliPrompt.systemMessage,
-        timeout: config.requestTimeoutMs,
-      };
-
-      await subprocess.run(subprocessOpts, (event: StreamJsonEvent) => {
-        if (!disconnected) {
-          adapter.handleEvent(event);
+      for await (const event of agent.run({ model, prompt, system, timeout: config.requestTimeoutMs })) {
+        if (event.type === 'text') {
+          fullText += event.text;
+        } else if (event.type === 'done') {
+          messageId = event.messageId;
+          usage = event.usage;
         }
-      });
-
-      if (!disconnected) {
-        const response = adapter.getBufferedResponse();
-        return ctx.json(response);
       }
 
-      // If disconnected, return error
-      return ctx.json(
-        {
-          error: {
-            message: 'Request was disconnected',
-            type: 'server_error',
-          },
-        },
-        { status: 500 }
-      );
+      const adapter = new OpenAIResponseAdapter(model);
+      return ctx.json(adapter.buildNonStreamingResponse(fullText, messageId, usage));
     } catch (error) {
       return ctx.json(
-        {
-          error: {
-            message: (error as Error).message,
-            type: 'server_error',
-          },
-        },
+        { error: { message: (error as Error).message, type: 'server_error' } },
         { status: 500 }
       );
     }
