@@ -48,6 +48,7 @@ export interface APIRequest {
   stream?: boolean;
   metadata?: Record<string, unknown>;
   thinking?: { type: string; budget_tokens?: number };
+  conversation_id?: string;
 }
 
 export interface APIResponse {
@@ -63,13 +64,4 @@ export interface APIResponse {
 export interface StreamEvent {
   type: string;
   [key: string]: unknown;
-}
-
-export interface QueuedRequest {
-  id: string;
-  format: 'anthropic' | 'openai';
-  data: APIRequest;
-  timestamp: number;
-  resolve: (value: unknown) => void;
-  reject: (error: unknown) => void;
 }
