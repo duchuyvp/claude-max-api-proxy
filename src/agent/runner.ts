@@ -11,11 +11,12 @@ export class AgentRunner {
     }
 
     try {
-      // Prepend system prompt to the user prompt instead of using SDK's systemPrompt
-      // This avoids replacing Claude Code's default system prompt which can cause
-      // issues with large system prompts from clients like OpenClaw
+      // Override SDK's default system prompt with empty string and prepend
+      // the client's system prompt to the user prompt. Using SDK's systemPrompt
+      // with large prompts (>27K chars) triggers "out of extra usage" errors
+      // due to combined token accounting with Claude Code's internal context.
       const fullPrompt = options.system
-        ? `<system_instructions>\n${options.system}\n</system_instructions>\n\n${options.prompt}`
+        ? `${options.system}\n\n${options.prompt}`
         : options.prompt;
 
       const q = query({
@@ -23,6 +24,7 @@ export class AgentRunner {
         options: {
           model: options.model,
           cwd: process.cwd(),
+          systemPrompt: '',
           permissionMode: 'bypassPermissions',
           allowDangerouslySkipPermissions: true,
           abortController,
