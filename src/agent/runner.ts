@@ -12,6 +12,16 @@ interface CapturedToolUse {
   input: any;
 }
 
+// All built-in Claude Code tools that must be blocked in passthrough mode
+const BUILTIN_TOOLS = [
+  'Task', 'AskUserQuestion', 'Bash', 'CronCreate', 'CronDelete', 'CronList',
+  'Edit', 'EnterPlanMode', 'EnterWorktree', 'ExitPlanMode', 'ExitWorktree',
+  'Glob', 'Grep', 'ListMcpResourcesTool', 'LSP', 'NotebookEdit', 'Read',
+  'ReadMcpResourceTool', 'RemoteTrigger', 'SendMessage', 'Skill', 'TaskOutput',
+  'TaskStop', 'TeamCreate', 'TeamDelete', 'TodoWrite', 'ToolSearch',
+  'WebFetch', 'WebSearch', 'Write', 'Agent', 'NotebookEdit',
+];
+
 export class AgentRunner {
   async *run(options: AgentRunOptions): AsyncGenerator<AgentEvent> {
     let timeoutHandle: NodeJS.Timeout | undefined;
@@ -47,6 +57,7 @@ export class AgentRunner {
         // Turn 1: model generates tool_use blocks (captured by PreToolUse hook)
         // Turn 2: SDK processes the blocked-tool handoff before generator returns
         sdkOptions.maxTurns = 2;
+        sdkOptions.disallowedTools = BUILTIN_TOOLS;
         sdkOptions.allowedTools = passthroughMcp.toolNames;
         sdkOptions.mcpServers = { [PASSTHROUGH_MCP_NAME]: passthroughMcp.server };
 
@@ -73,6 +84,7 @@ export class AgentRunner {
       let stopReason = '';
       let usage = { input_tokens: 0, output_tokens: 0 };
       let assistantCount = 0;
+      const yieldedToolIds = new Set<string>();
 
       for await (const message of q) {
         if (message.type === 'assistant') {
@@ -89,7 +101,8 @@ export class AgentRunner {
           }
 
           // In passthrough mode, skip Turn 2 content (SDK artefact)
-          if (passthrough && assistantCount > 1) {
+          // Only skip if we already captured tool_use blocks (meaning Turn 1 had tools)
+          if (passthrough && assistantCount > 1 && capturedToolUses.length > 0) {
             continue;
           }
 
@@ -100,7 +113,8 @@ export class AgentRunner {
                 yield { type: 'text', text: block.text };
               }
               // Forward tool_use blocks to client (with MCP prefix stripped)
-              if (block.type === 'tool_use') {
+              if (block.type === 'tool_use' && block.id && !yieldedToolIds.has(block.id)) {
+                yieldedToolIds.add(block.id);
                 yield {
                   type: 'tool_use',
                   id: block.id,
@@ -126,12 +140,10 @@ export class AgentRunner {
         }
       }
 
-      // Emit any tool_use blocks captured by PreToolUse hook but not in content
+      // Emit any tool_use blocks captured by PreToolUse hook but not already yielded
       for (const tu of capturedToolUses) {
-        const alreadyYielded = false; // Hook captures may duplicate content blocks
-        if (!alreadyYielded) {
-          // Check if already yielded via content blocks above
-          // (dedupe handled by adapter via tool IDs)
+        if (!yieldedToolIds.has(tu.id)) {
+          yieldedToolIds.add(tu.id);
           yield { type: 'tool_use', id: tu.id, name: tu.name, input: tu.input };
         }
       }

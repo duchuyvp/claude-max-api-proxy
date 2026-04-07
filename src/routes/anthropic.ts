@@ -15,16 +15,34 @@ function extractSystemText(system: any): string {
   return '';
 }
 
+function extractContentText(content: any): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+
+  const parts: string[] = [];
+  for (const block of content) {
+    if (block.type === 'text' && block.text) {
+      parts.push(block.text);
+    } else if (block.type === 'tool_use') {
+      parts.push(`[Tool call: ${block.name}(${JSON.stringify(block.input)})]`);
+    } else if (block.type === 'tool_result') {
+      const resultContent = typeof block.content === 'string'
+        ? block.content
+        : Array.isArray(block.content)
+          ? block.content.filter((b: any) => b.type === 'text').map((b: any) => b.text || '').join('')
+          : JSON.stringify(block.content);
+      parts.push(`[Tool result for ${block.tool_use_id}: ${block.is_error ? 'ERROR: ' : ''}${resultContent}]`);
+    }
+  }
+  return parts.join('\n');
+}
+
 function extractPrompt(body: APIRequest): { prompt: string; system?: string } {
   let system = extractSystemText(body.system);
   let prompt = '';
 
   for (const msg of body.messages) {
-    const content = typeof msg.content === 'string'
-      ? msg.content
-      : Array.isArray(msg.content)
-        ? msg.content.filter((b: any) => b.type === 'text').map((b: any) => b.text || '').join('')
-        : '';
+    const content = extractContentText(msg.content);
 
     if (msg.role === 'system') {
       system = content;
