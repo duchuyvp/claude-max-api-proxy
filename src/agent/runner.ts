@@ -11,12 +11,18 @@ export class AgentRunner {
     }
 
     try {
+      // Prepend system prompt to the user prompt instead of using SDK's systemPrompt
+      // This avoids replacing Claude Code's default system prompt which can cause
+      // issues with large system prompts from clients like OpenClaw
+      const fullPrompt = options.system
+        ? `<system_instructions>\n${options.system}\n</system_instructions>\n\n${options.prompt}`
+        : options.prompt;
+
       const q = query({
-        prompt: options.prompt,
+        prompt: fullPrompt,
         options: {
           model: options.model,
           cwd: process.cwd(),
-          systemPrompt: options.system || undefined,
           permissionMode: 'bypassPermissions',
           allowDangerouslySkipPermissions: true,
           abortController,
