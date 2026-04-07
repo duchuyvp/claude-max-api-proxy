@@ -23,7 +23,7 @@ export class AgentRunner {
         prompt: fullPrompt,
         options: {
           model: options.model,
-          cwd: process.cwd(),
+          cwd: process.env.HOME + '/.openclaw/workspace',
           systemPrompt: '.',
           permissionMode: 'bypassPermissions',
           allowDangerouslySkipPermissions: true,
