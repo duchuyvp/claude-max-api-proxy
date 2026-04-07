@@ -4,6 +4,7 @@ export class AnthropicResponseAdapter {
   private encoder = new TextEncoder();
   private messageStartSent = false;
   private contentIndex = 0;
+  private contentBlocks: any[] = [];
 
   constructor(model: string, writer?: WritableStreamDefaultWriter<Uint8Array>) {
     this.model = model;
@@ -53,19 +54,52 @@ export class AnthropicResponseAdapter {
     this.contentIndex++;
   }
 
-  writeStreamEnd(usage: { input_tokens: number; output_tokens: number }): void {
+  writeStreamToolUse(
+    toolId: string,
+    toolName: string,
+    toolInput: any,
+    messageId: string,
+    usage: { input_tokens: number; output_tokens: number }
+  ): void {
+    if (!this.responseWriter) return;
+
+    this.sendMessageStart(messageId, usage);
+
+    this.sendEvent('content_block_start', {
+      type: 'content_block_start',
+      index: this.contentIndex,
+      content_block: { type: 'tool_use', id: toolId, name: toolName, input: {} },
+    });
+
+    this.sendEvent('content_block_delta', {
+      type: 'content_block_delta',
+      index: this.contentIndex,
+      delta: { type: 'input_json_delta', partial_json: JSON.stringify(toolInput) },
+    });
+
+    this.sendEvent('content_block_stop', {
+      type: 'content_block_stop',
+      index: this.contentIndex,
+    });
+
+    this.contentIndex++;
+  }
+
+  writeStreamEnd(stopReason: string, usage: { input_tokens: number; output_tokens: number }): void {
     if (!this.responseWriter) return;
     this.sendEvent('message_delta', {
       type: 'message_delta',
-      delta: { stop_reason: 'end_turn' },
+      delta: { stop_reason: stopReason, stop_sequence: null },
       usage,
     });
     this.sendEvent('message_stop', { type: 'message_stop' });
-    this.writeData('[DONE]');
+  }
+
+  addContentBlock(block: any): void {
+    this.contentBlocks.push(block);
   }
 
   buildNonStreamingResponse(
-    fullText: string,
     messageId: string,
     model: string,
     stopReason: string,
@@ -76,7 +110,7 @@ export class AnthropicResponseAdapter {
       type: 'message',
       role: 'assistant',
       model,
-      content: [{ type: 'text', text: fullText }],
+      content: this.contentBlocks,
       stop_reason: stopReason,
       usage,
     };

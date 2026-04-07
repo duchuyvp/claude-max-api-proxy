@@ -53,6 +53,8 @@ export function createAnthropicRoutes(): Hono {
     const model = resolveModel(body.model, config);
     const isStreaming = body.stream ?? false;
     const { prompt, system } = extractPrompt(body);
+    const tools = body.tools;
+    const toolUseIds = new Set<string>();
 
     try {
       if (isStreaming) {
@@ -72,14 +74,21 @@ export function createAnthropicRoutes(): Hono {
           try {
             let messageId = 'msg_' + Date.now();
             let usage = { input_tokens: 0, output_tokens: 0 };
+            let stopReason = 'end_turn';
 
-            for await (const event of agent.run({ model, prompt, system, timeout: config.requestTimeoutMs })) {
+            for await (const event of agent.run({ model, prompt, system, tools, timeout: config.requestTimeoutMs })) {
               if (event.type === 'text') {
                 adapter.writeStreamChunk(event.text, messageId, usage);
+              } else if (event.type === 'tool_use') {
+                if (!toolUseIds.has(event.id)) {
+                  toolUseIds.add(event.id);
+                  adapter.writeStreamToolUse(event.id, event.name, event.input, messageId, usage);
+                }
               } else if (event.type === 'done') {
                 messageId = event.messageId;
                 usage = event.usage;
-                adapter.writeStreamEnd(usage);
+                stopReason = event.stopReason;
+                adapter.writeStreamEnd(stopReason, usage);
               }
             }
             await writer.close();
@@ -92,14 +101,24 @@ export function createAnthropicRoutes(): Hono {
       }
 
       // Non-streaming
-      let fullText = '';
+      const adapter = new AnthropicResponseAdapter(model);
       let messageId = '';
       let stopReason = 'end_turn';
       let usage = { input_tokens: 0, output_tokens: 0 };
 
-      for await (const event of agent.run({ model, prompt, system, timeout: config.requestTimeoutMs })) {
+      for await (const event of agent.run({ model, prompt, system, tools, timeout: config.requestTimeoutMs })) {
         if (event.type === 'text') {
-          fullText += event.text;
+          adapter.addContentBlock({ type: 'text', text: event.text });
+        } else if (event.type === 'tool_use') {
+          if (!toolUseIds.has(event.id)) {
+            toolUseIds.add(event.id);
+            adapter.addContentBlock({
+              type: 'tool_use',
+              id: event.id,
+              name: event.name,
+              input: event.input,
+            });
+          }
         } else if (event.type === 'done') {
           messageId = event.messageId;
           stopReason = event.stopReason;
@@ -107,8 +126,7 @@ export function createAnthropicRoutes(): Hono {
         }
       }
 
-      const adapter = new AnthropicResponseAdapter(model);
-      return ctx.json(adapter.buildNonStreamingResponse(fullText, messageId, model, stopReason, usage));
+      return ctx.json(adapter.buildNonStreamingResponse(messageId, model, stopReason, usage));
     } catch (error) {
       return ctx.json(
         { error: { message: (error as Error).message, type: 'server_error' } },
