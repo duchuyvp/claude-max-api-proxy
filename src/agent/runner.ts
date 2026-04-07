@@ -11,10 +11,10 @@ export class AgentRunner {
     }
 
     try {
-      // Override SDK's default system prompt with empty string and prepend
-      // the client's system prompt to the user prompt. Using SDK's systemPrompt
-      // with large prompts (>27K chars) triggers "out of extra usage" errors
-      // due to combined token accounting with Claude Code's internal context.
+      // Use '.' as systemPrompt to override SDK's default text while keeping
+      // tool definitions intact. Empty string '' is falsy so SDK ignores it and
+      // falls back to default. Client's system prompt is prepended to the user
+      // prompt because SDK's systemPrompt option fails with large prompts (>27K).
       const fullPrompt = options.system
         ? `${options.system}\n\n${options.prompt}`
         : options.prompt;
@@ -24,7 +24,7 @@ export class AgentRunner {
         options: {
           model: options.model,
           cwd: process.cwd(),
-          systemPrompt: '',
+          systemPrompt: '.',
           permissionMode: 'bypassPermissions',
           allowDangerouslySkipPermissions: true,
           abortController,
